@@ -1,0 +1,98 @@
+name: Dependencies & Security Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  # 1. Comprobar si hay nuevas versiones de las dependencias
+  outdated-dependencies:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check for outdated dependencies
+        run: |
+          pip list --outdated
+
+  # 2. Verificar compatibilidad con Python 3.13 y 3.14
+  python-compatibility:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.13', '3.14']
+    services:
+      mariadb:
+        image: mariadb:12.0.2
+        env:
+          MARIADB_ROOT_PASSWORD: uvlhub_root_password
+          MARIADB_DATABASE: uvlhubdb_test
+          MARIADB_USER: uvlhub_user
+          MARIADB_PASSWORD: uvlhub_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -u root -p$MARIADB_ROOT_PASSWORD"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ./rosemary
+
+      - name: Run tests
+        run: |
+          pytest app/features/ --ignore-glob='*selenium*'
+        env:
+          FLASK_ENV: testing
+          MARIADB_HOSTNAME: 127.0.0.1
+          MARIADB_PORT: 3306
+          MARIADB_TEST_DATABASE: uvlhubdb_test
+          MARIADB_USER: uvlhub_user
+          MARIADB_PASSWORD: uvlhub_password
+
+  # 3. Analisis de seguridad de las dependencias con pip-audit
+  security-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run security audit
+        run: pip-audit -r requirements.txt
